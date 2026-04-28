@@ -192,32 +192,32 @@ export default function CalendarPage() {
   return (
     <div className="p-3 sm:p-6 space-y-3 sm:space-y-4">
       {/* Header — single row: title + nav + view toggle, all inline */}
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <CalendarIcon className="h-5 w-5 text-primary shrink-0" />
-          <h1 className="text-base sm:text-lg font-semibold tracking-tight truncate" data-testid="text-page-title">
+      <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <CalendarIcon className="h-7 w-7 sm:h-8 sm:w-8 text-primary shrink-0" />
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight truncate" data-testid="text-page-title">
             {headerLabel}
           </h1>
         </div>
-        <div className="flex items-center gap-2 ml-auto">
-          <div className="flex items-center rounded-md border bg-card">
-            <Button variant="ghost" size="icon" onClick={stepBack} data-testid="button-prev" aria-label="Previous" className="h-8 w-8">
-              <ChevronLeft className="h-4 w-4" />
+        <div className="flex items-center gap-2 sm:gap-3 ml-auto">
+          <div className="flex items-center rounded-lg border bg-card shadow-sm">
+            <Button variant="ghost" size="icon" onClick={stepBack} data-testid="button-prev" aria-label="Previous" className="h-11 w-11">
+              <ChevronLeft className="h-5 w-5" />
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setCursor(new Date())} data-testid="button-today" className="h-8 px-2">
+            <Button variant="ghost" size="sm" onClick={() => setCursor(new Date())} data-testid="button-today" className="h-11 px-3.5 text-sm font-medium">
               Today
             </Button>
-            <Button variant="ghost" size="icon" onClick={stepForward} data-testid="button-next" aria-label="Next" className="h-8 w-8">
-              <ChevronRight className="h-4 w-4" />
+            <Button variant="ghost" size="icon" onClick={stepForward} data-testid="button-next" aria-label="Next" className="h-11 w-11">
+              <ChevronRight className="h-5 w-5" />
             </Button>
           </div>
-          <div className="flex items-center rounded-md border bg-card">
+          <div className="flex items-center rounded-lg border bg-card shadow-sm">
             <Button
               variant={view === "agenda" ? "secondary" : "ghost"}
               size="sm"
               onClick={() => pickView("agenda")}
               data-testid="button-view-agenda"
-              className="h-8 px-2.5"
+              className="h-11 px-4 text-sm font-medium"
             >
               List
             </Button>
@@ -226,7 +226,7 @@ export default function CalendarPage() {
               size="sm"
               onClick={() => pickView("week")}
               data-testid="button-view-week"
-              className="h-8 px-2.5"
+              className="h-11 px-4 text-sm font-medium"
             >
               Week
             </Button>
@@ -235,7 +235,7 @@ export default function CalendarPage() {
               size="sm"
               onClick={() => pickView("month")}
               data-testid="button-view-month"
-              className="h-8 px-2.5"
+              className="h-11 px-4 text-sm font-medium"
             >
               Month
             </Button>

@@ -10,8 +10,8 @@ import { useToast } from "@/hooks/use-toast";
 export default function LoginPage() {
   const { login } = useAuth();
   const [, setLocation] = useLocation();
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
 
@@ -35,7 +35,7 @@ export default function LoginPage() {
         <CardHeader>
           <CardTitle>Sign in</CardTitle>
           <CardDescription>
-            Default admin account: <span className="font-mono">admin</span> / <span className="font-mono">admin</span>
+            Use the username and password your admin gave you.
           </CardDescription>
         </CardHeader>
         <CardContent>

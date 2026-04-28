@@ -37,7 +37,9 @@ sqlite.exec(`
     name TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'viewer',
     provider_id INTEGER,
-    feed_token TEXT UNIQUE NOT NULL
+    feed_token TEXT UNIQUE NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    must_change_password INTEGER NOT NULL DEFAULT 0
   );
   CREATE TABLE IF NOT EXISTS providers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,6 +99,18 @@ sqlite.exec(`
   );
 `);
 
+// Idempotent migrations for existing DBs (adds columns that older seeds didn't have)
+function columnExists(table: string, col: string): boolean {
+  const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  return rows.some((r) => r.name === col);
+}
+if (!columnExists("users", "active")) {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1`);
+}
+if (!columnExists("users", "must_change_password")) {
+  sqlite.exec(`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`);
+}
+
 export const db = drizzle(sqlite);
 
 function now() {
@@ -114,6 +128,9 @@ export interface IStorage {
   getUserByFeedToken(token: string): Promise<User | undefined>;
   listUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
+  updateUser(id: number, u: Partial<InsertUser>): Promise<User | undefined>;
+  deleteUser(id: number): Promise<boolean>;
+  setUserPassword(id: number, password: string, mustChange: boolean): Promise<User | undefined>;
   // providers
   listProviders(): Promise<Provider[]>;
   getProvider(id: number): Promise<Provider | undefined>;
@@ -154,6 +171,18 @@ export class DatabaseStorage implements IStorage {
   }
   async createUser(u: InsertUser) {
     return db.insert(users).values({ ...u, feedToken: token() }).returning().get();
+  }
+  async updateUser(id: number, u: Partial<InsertUser>) {
+    const existing = await this.getUser(id);
+    if (!existing) return undefined;
+    return db.update(users).set(u).where(eq(users.id, id)).returning().get();
+  }
+  async deleteUser(id: number) {
+    const res = db.delete(users).where(eq(users.id, id)).run();
+    return (res.changes ?? 0) > 0;
+  }
+  async setUserPassword(id: number, password: string, mustChange: boolean) {
+    return db.update(users).set({ password, mustChangePassword: mustChange }).where(eq(users.id, id)).returning().get();
   }
 
   async listProviders() {

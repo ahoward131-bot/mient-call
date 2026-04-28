@@ -8,6 +8,8 @@ export type SessionUser = {
   role: "admin" | "physician" | "pa" | "viewer";
   providerId: number | null;
   feedToken: string;
+  active?: boolean;
+  mustChangePassword?: boolean;
 };
 
 type AuthCtx = {
@@ -15,6 +17,7 @@ type AuthCtx = {
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  refresh: () => Promise<void>;
 };
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -46,7 +49,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
-  return <Ctx.Provider value={{ user, loading, login, logout }}>{children}</Ctx.Provider>;
+  const refresh = async () => {
+    try {
+      const res = await apiRequest("GET", "/api/auth/me");
+      const body = await res.json();
+      setUser(body.user ?? null);
+    } catch {
+      setUser(null);
+    }
+  };
+
+  return <Ctx.Provider value={{ user, loading, login, logout, refresh }}>{children}</Ctx.Provider>;
 }
 
 export function useAuth() {

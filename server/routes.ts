@@ -65,6 +65,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!user || user.password !== parsed.data.password) {
       return res.status(401).json({ error: "invalid_credentials" });
     }
+    if (user.active === false) {
+      return res.status(403).json({ error: "account_disabled" });
+    }
     const t = makeSessionToken();
     sessions.set(t, user.id);
     const { password: _pw, ...safeUser } = user;
@@ -84,6 +87,164 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!user) return res.json({ user: null });
     const { password: _pw, ...safeUser } = user;
     res.json({ user: safeUser });
+  });
+
+  // --------- Self-service: change own password ----------
+  app.post("/api/auth/change-password", requireAuth, async (req, res) => {
+    const me = (req as any).user as User;
+    const { currentPassword, newPassword } = req.body ?? {};
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
+      return res.status(400).json({ error: "new_password_too_short" });
+    }
+    // If user is being forced to change pw, allow without verifying current (since they may have just been issued a temp pw they're typing now anyway).
+    // Otherwise require correct current password.
+    if (!me.mustChangePassword) {
+      if (typeof currentPassword !== "string" || currentPassword !== me.password) {
+        return res.status(401).json({ error: "wrong_current_password" });
+      }
+    }
+    await storage.setUserPassword(me.id, newPassword, false);
+    await storage.appendAudit({
+      at: new Date().toISOString(),
+      actorId: me.id,
+      actorName: me.name,
+      action: "user.change_password",
+      details: JSON.stringify({ self: true }),
+    });
+    res.json({ ok: true });
+  });
+
+  // --------- Admin: User management ----------
+  app.get("/api/users", requireAuth, requireAdmin, async (_req, res) => {
+    const list = await storage.listUsers();
+    res.json(list.map(({ password: _pw, ...u }) => u));
+  });
+
+  app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
+    const me = (req as any).user as User;
+    const { username, name, role, providerId, password } = req.body ?? {};
+    if (typeof username !== "string" || username.trim().length < 1)
+      return res.status(400).json({ error: "username_required" });
+    if (typeof name !== "string" || name.trim().length < 1)
+      return res.status(400).json({ error: "name_required" });
+    if (typeof password !== "string" || password.length < 4)
+      return res.status(400).json({ error: "password_too_short" });
+    const validRoles = ["admin", "physician", "pa", "viewer"];
+    const finalRole = validRoles.includes(role) ? role : "viewer";
+    const existing = await storage.getUserByUsername(username.trim());
+    if (existing) return res.status(409).json({ error: "username_taken" });
+    try {
+      const created = await storage.createUser({
+        username: username.trim(),
+        password,
+        name: name.trim(),
+        role: finalRole,
+        providerId: providerId ?? null,
+        active: true,
+        mustChangePassword: true,
+      } as any);
+      await storage.appendAudit({
+        at: new Date().toISOString(),
+        actorId: me.id,
+        actorName: me.name,
+        action: "user.create",
+        details: JSON.stringify({ id: created.id, username: created.username, role: finalRole }),
+      });
+      const { password: _pw, ...safe } = created;
+      res.status(201).json(safe);
+    } catch (e: any) {
+      res.status(500).json({ error: "create_failed", detail: String(e?.message ?? e) });
+    }
+  });
+
+  app.patch("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
+    const me = (req as any).user as User;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "bad_id" });
+    const target = await storage.getUser(id);
+    if (!target) return res.status(404).json({ error: "not_found" });
+    const { name, role, providerId, active } = req.body ?? {};
+    const patch: any = {};
+    if (typeof name === "string" && name.trim().length > 0) patch.name = name.trim();
+    if (typeof role === "string" && ["admin", "physician", "pa", "viewer"].includes(role)) patch.role = role;
+    if (providerId === null || typeof providerId === "number") patch.providerId = providerId;
+    if (typeof active === "boolean") {
+      // Prevent the last active admin from being disabled / demoted
+      if ((active === false || (patch.role && patch.role !== "admin" && target.role === "admin"))) {
+        const allUsers = await storage.listUsers();
+        const otherActiveAdmins = allUsers.filter(
+          (u) => u.id !== id && u.role === "admin" && u.active !== false,
+        );
+        if (otherActiveAdmins.length === 0 && target.role === "admin") {
+          return res.status(400).json({ error: "cannot_remove_last_admin" });
+        }
+      }
+      patch.active = active;
+    }
+    const updated = await storage.updateUser(id, patch);
+    await storage.appendAudit({
+      at: new Date().toISOString(),
+      actorId: me.id,
+      actorName: me.name,
+      action: "user.update",
+      details: JSON.stringify({ id, patch }),
+    });
+    if (!updated) return res.status(404).json({ error: "not_found" });
+    const { password: _pw, ...safe } = updated;
+    res.json(safe);
+  });
+
+  app.post("/api/users/:id/reset-password", requireAuth, requireAdmin, async (req, res) => {
+    const me = (req as any).user as User;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "bad_id" });
+    const { password } = req.body ?? {};
+    if (typeof password !== "string" || password.length < 4)
+      return res.status(400).json({ error: "password_too_short" });
+    const updated = await storage.setUserPassword(id, password, true);
+    if (!updated) return res.status(404).json({ error: "not_found" });
+    // Invalidate all existing sessions for this user, so they get kicked out and forced to log in again
+    for (const [tok, uid] of sessions.entries()) {
+      if (uid === id) sessions.delete(tok);
+    }
+    await storage.appendAudit({
+      at: new Date().toISOString(),
+      actorId: me.id,
+      actorName: me.name,
+      action: "user.reset_password",
+      details: JSON.stringify({ id }),
+    });
+    res.json({ ok: true });
+  });
+
+  app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
+    const me = (req as any).user as User;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "bad_id" });
+    if (id === me.id) return res.status(400).json({ error: "cannot_delete_self" });
+    const target = await storage.getUser(id);
+    if (!target) return res.status(404).json({ error: "not_found" });
+    if (target.role === "admin") {
+      const all = await storage.listUsers();
+      const otherActiveAdmins = all.filter(
+        (u) => u.id !== id && u.role === "admin" && u.active !== false,
+      );
+      if (otherActiveAdmins.length === 0) {
+        return res.status(400).json({ error: "cannot_remove_last_admin" });
+      }
+    }
+    const ok = await storage.deleteUser(id);
+    for (const [tok, uid] of sessions.entries()) {
+      if (uid === id) sessions.delete(tok);
+    }
+    await storage.appendAudit({
+      at: new Date().toISOString(),
+      actorId: me.id,
+      actorName: me.name,
+      action: "user.delete",
+      details: JSON.stringify({ id, username: target.username }),
+    });
+    res.json({ ok });
   });
 
   // --------- Public read-only endpoints (for the practice-wide view) ----------

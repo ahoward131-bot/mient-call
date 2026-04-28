@@ -44,6 +44,8 @@ export const users = sqliteTable("users", {
   role: text("role").notNull().default("viewer"), // admin | physician | pa | viewer
   providerId: integer("provider_id"), // link to providers.id if this user IS a provider
   feedToken: text("feed_token").notNull().unique(), // random token for their personal iCal feed
+  active: integer("active", { mode: "boolean" }).notNull().default(true), // disabled users cannot log in
+  mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(false), // force password change on next login
 });
 
 export const providers = sqliteTable("providers", {

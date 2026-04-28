@@ -18,6 +18,8 @@ import FlagsPage from "@/pages/FlagsPage";
 import ReportsPage from "@/pages/ReportsPage";
 import KeyPage from "@/pages/KeyPage";
 import LoginPage from "@/pages/LoginPage";
+import UsersPage from "@/pages/UsersPage";
+import ChangePasswordDialog from "@/components/ChangePasswordDialog";
 import logoUrl from "/logo.svg?url";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -26,6 +28,7 @@ import {
   CalendarPlus,
   ArrowLeftRight,
   Users,
+  UserCog,
   BookOpen,
   Rss,
   History,
@@ -47,6 +50,7 @@ function AppRouter() {
       <Route path="/schedule" component={SchedulePage} />
       <Route path="/swaps" component={SwapsPage} />
       <Route path="/providers" component={ProvidersPage} />
+      <Route path="/users" component={UsersPage} />
       <Route path="/feeds" component={FeedsPage} />
       <Route path="/audit" component={AuditPage} />
       <Route path="/flags" component={FlagsPage} />
@@ -125,6 +129,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <NavItem href="/schedule" icon={CalendarPlus} label="Build schedule" adminOnly onNavigate={close} />
         <NavItem href="/swaps" icon={ArrowLeftRight} label="Swaps" onNavigate={close} />
         <NavItem href="/providers" icon={Users} label="Providers" adminOnly onNavigate={close} />
+        <NavItem href="/users" icon={UserCog} label="User accounts" adminOnly onNavigate={close} />
         <NavItem href="/feeds" icon={Rss} label="Calendar feeds" onNavigate={close} />
         <NavItem href="/flags" icon={FlagIcon} label="Flags" onNavigate={close} />
         <NavItem href="/reports" icon={FileText} label="Reports" adminOnly onNavigate={close} />
@@ -135,18 +140,29 @@ function Shell({ children }: { children: React.ReactNode }) {
 
       <div className="p-3 border-t border-sidebar-border flex flex-col gap-2">
         {user ? (
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" onClick={toggle} data-testid="button-theme-toggle" aria-label="Toggle theme" className="text-sidebar-foreground hover:text-sidebar-foreground shrink-0">
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium truncate text-sidebar-foreground" data-testid="text-user-name">{user.name}</div>
-              <div className="text-[11px] text-sidebar-foreground/60 truncate capitalize">{user.role}</div>
+          <>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" onClick={toggle} data-testid="button-theme-toggle" aria-label="Toggle theme" className="text-sidebar-foreground hover:text-sidebar-foreground shrink-0">
+                {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </Button>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium truncate text-sidebar-foreground" data-testid="text-user-name">{user.name}</div>
+                <div className="text-[11px] text-sidebar-foreground/60 truncate capitalize">{user.role}</div>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => { logout(); close(); }} data-testid="button-logout" aria-label="Sign out" className="text-sidebar-foreground hover:text-sidebar-foreground shrink-0">
+                <LogOut className="h-4 w-4" />
+              </Button>
             </div>
-            <Button variant="ghost" size="icon" onClick={() => { logout(); close(); }} data-testid="button-logout" aria-label="Sign out" className="text-sidebar-foreground hover:text-sidebar-foreground shrink-0">
-              <LogOut className="h-4 w-4" />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => { window.__openChangePassword?.(); close(); }}
+              data-testid="button-change-password"
+              className="w-full justify-start text-sidebar-foreground/80 hover:text-sidebar-foreground"
+            >
+              <KeyIcon className="h-3.5 w-3.5 mr-2" /> Change my password
             </Button>
-          </div>
+          </>
         ) : (
           <>
             <Link href="/login" onClick={close}>
@@ -167,6 +183,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       </div>
     </>
   );
+  // unused destructure below removed
 
   return (
     <div className="min-h-screen md:flex bg-background text-foreground">
@@ -215,6 +232,7 @@ function App() {
               <Shell>
                 <AppRouter />
               </Shell>
+              <ChangePasswordDialog />
             </Router>
           </TooltipProvider>
         </AuthProvider>
