@@ -72,16 +72,61 @@ export function buildICal(opts: {
   lines.push(`X-WR-CALNAME:${escapeICS(calendarName)}`);
   lines.push(`NAME:${escapeICS(calendarName)}`);
 
+  // Merge shifts that are the same (provider + pool + start + end) but stored as
+  // separate rows because they cover multiple locations. The frontend already
+  // visually dedupes these, but the raw iCal feed was emitting one event per
+  // location — making subscribed calendars look 2-3x duplicated.
+  type MergedShift = {
+    id: number;
+    providerId: number;
+    pool: string;
+    startAt: string;
+    endAt: string;
+    updatedAt: string;
+    note: string | null;
+    locations: string[];
+  };
+  const groups = new Map<string, MergedShift>();
   for (const s of shifts) {
+    const key = `${s.providerId}|${s.pool}|${s.startAt}|${s.endAt}`;
+    const existing = groups.get(key);
+    if (existing) {
+      if (s.location && !existing.locations.includes(s.location)) {
+        existing.locations.push(s.location);
+      }
+      // Keep the most recent updatedAt so calendar clients refresh on any change.
+      if (s.updatedAt > existing.updatedAt) existing.updatedAt = s.updatedAt;
+    } else {
+      groups.set(key, {
+        id: s.id,
+        providerId: s.providerId,
+        pool: s.pool,
+        startAt: s.startAt,
+        endAt: s.endAt,
+        updatedAt: s.updatedAt,
+        note: s.note ?? null,
+        locations: s.location ? [s.location] : [],
+      });
+    }
+  }
+
+  for (const s of groups.values()) {
     const prov = provMap.get(s.providerId);
     const poolMeta = POOL_META[s.pool as Pool];
     const poolLabel = poolMeta?.label ?? s.pool;
     const provName = providerLabel(prov, s.providerId);
-    const summary = `${poolLabel} — ${provName}${s.location ? ` @ ${s.location}` : ""}`;
+    // Compact location summary: omit if none, show 1 plainly, collapse 2+ into "X + N more"
+    const locSummary =
+      s.locations.length === 0
+        ? ""
+        : s.locations.length === 1
+        ? ` @ ${s.locations[0]}`
+        : ` @ ${s.locations[0]} + ${s.locations.length - 1} more`;
+    const summary = `${poolLabel} — ${provName}${locSummary}`;
     const description = [
       `Pool: ${poolLabel}`,
       `Provider: ${provName}`,
-      s.location ? `Location: ${s.location}` : null,
+      s.locations.length > 0 ? `Locations: ${s.locations.join(", ")}` : null,
       s.note ? `Note: ${s.note}` : null,
       // Include the actual on-call hours in the description since the event itself is all-day.
       `Hours: ${new Date(s.startAt).toLocaleString(undefined, {
@@ -123,7 +168,7 @@ export function buildICal(opts: {
     lines.push("TRANSP:TRANSPARENT");
     lines.push(`SUMMARY:${escapeICS(summary)}`);
     lines.push(`DESCRIPTION:${escapeICS(description)}`);
-    if (s.location) lines.push(`LOCATION:${escapeICS(s.location)}`);
+    if (s.locations.length > 0) lines.push(`LOCATION:${escapeICS(s.locations.join(", "))}`);
     lines.push("END:VEVENT");
   }
 
