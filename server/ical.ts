@@ -113,10 +113,10 @@ export function buildICal(opts: {
   lines.push(`X-WR-CALNAME:${escapeICS(calendarName)}`);
   lines.push(`NAME:${escapeICS(calendarName)}`);
 
-  // Merge shifts that are the same (provider + pool + start + end) but stored as
-  // separate rows because they cover multiple locations. The frontend already
-  // visually dedupes these, but the raw iCal feed was emitting one event per
-  // location — making subscribed calendars look 2-3x duplicated.
+  // ----------------------------------------------------------------------
+  // Step 1: collapse same-key duplicates (provider + pool + start + end)
+  // that exist only to record multiple locations.
+  // ----------------------------------------------------------------------
   type MergedShift = {
     id: number;
     providerId: number;
@@ -127,18 +127,17 @@ export function buildICal(opts: {
     note: string | null;
     locations: string[];
   };
-  const groups = new Map<string, MergedShift>();
+  const exactGroups = new Map<string, MergedShift>();
   for (const s of filtered) {
     const key = `${s.providerId}|${s.pool}|${s.startAt}|${s.endAt}`;
-    const existing = groups.get(key);
+    const existing = exactGroups.get(key);
     if (existing) {
       if (s.location && !existing.locations.includes(s.location)) {
         existing.locations.push(s.location);
       }
-      // Keep the most recent updatedAt so calendar clients refresh on any change.
       if (s.updatedAt > existing.updatedAt) existing.updatedAt = s.updatedAt;
     } else {
-      groups.set(key, {
+      exactGroups.set(key, {
         id: s.id,
         providerId: s.providerId,
         pool: s.pool,
@@ -151,38 +150,144 @@ export function buildICal(opts: {
     }
   }
 
-  for (const s of groups.values()) {
-    const prov = provMap.get(s.providerId);
-    const poolMeta = POOL_META[s.pool as Pool];
-    const poolLabel = poolMeta?.label ?? s.pool;
-    const shortPool = SHORT_POOL_TITLE[s.pool] ?? poolMeta?.short ?? poolLabel;
-    // Use the provider's last name only in the title (matches the app's week view).
-    // Drop the "Dr." prefix in the title; PAs already have ", PA-C" baked in by
-    // providerLabel(). For docs, just show the last name; PAs show "Last, PA-C".
+  // ----------------------------------------------------------------------
+  // Step 2: convert each shift into the set of "call days" it covers, then
+  // merge consecutive call-days for the same (provider, pool, note) into a
+  // single multi-day all-day event.
+  //
+  // "Call day" = the local calendar date the shift's coverage *belongs* to.
+  // Convention: a 24-hour shift that starts at 8am on day D and ends at 8am
+  // on D+1 is rendered as a single all-day event on day D — NOT spanning
+  // both D and D+1 (which is what made the calendar look 2x cluttered).
+  //
+  // Thursday handoff (Thu 8a → Fri 5p) still counts as Thursday only; the
+  // Friday assignment is a separate shift owned by the next provider.
+  // ----------------------------------------------------------------------
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const ymdLocal = (iso: string) => {
+    const d = new Date(iso);
+    return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
+  };
+  const dateAdd = (yyyymmdd: string, days: number) => {
+    const y = Number(yyyymmdd.slice(0, 4));
+    const m = Number(yyyymmdd.slice(4, 6));
+    const d = Number(yyyymmdd.slice(6, 8));
+    const dt = new Date(y, m - 1, d);
+    dt.setDate(dt.getDate() + days);
+    return `${dt.getFullYear()}${pad2(dt.getMonth() + 1)}${pad2(dt.getDate())}`;
+  };
+
+  type Stretch = {
+    providerId: number;
+    pool: string;
+    callDay: string; // YYYYMMDD
+    sourceShift: MergedShift;
+  };
+  const stretches: Stretch[] = [];
+  for (const s of exactGroups.values()) {
+    // Each shift maps to ONE call day = its local start date.
+    stretches.push({
+      providerId: s.providerId,
+      pool: s.pool,
+      callDay: ymdLocal(s.startAt),
+      sourceShift: s,
+    });
+  }
+  // Sort so consecutive same-(provider,pool) days are adjacent.
+  stretches.sort((a, b) =>
+    a.providerId !== b.providerId
+      ? a.providerId - b.providerId
+      : a.pool < b.pool
+      ? -1
+      : a.pool > b.pool
+      ? 1
+      : a.callDay.localeCompare(b.callDay),
+  );
+
+  // Walk the sorted list and merge consecutive call-days for the same
+  // (provider, pool). Notes break a stretch (so a "also THGR ER" day stays
+  // its own event and the user can see the override clearly).
+  type Block = {
+    id: number;
+    providerId: number;
+    pool: string;
+    firstDay: string;
+    lastDay: string;
+    sourceShifts: MergedShift[];
+    note: string | null;
+  };
+  const blocks: Block[] = [];
+  for (const st of stretches) {
+    const last = blocks[blocks.length - 1];
+    const note = st.sourceShift.note;
+    const sameRun =
+      last &&
+      last.providerId === st.providerId &&
+      last.pool === st.pool &&
+      (last.note ?? null) === (note ?? null) &&
+      dateAdd(last.lastDay, 1) === st.callDay;
+    if (sameRun) {
+      last.lastDay = st.callDay;
+      last.sourceShifts.push(st.sourceShift);
+    } else {
+      blocks.push({
+        id: st.sourceShift.id,
+        providerId: st.providerId,
+        pool: st.pool,
+        firstDay: st.callDay,
+        lastDay: st.callDay,
+        sourceShifts: [st.sourceShift],
+        note,
+      });
+    }
+  }
+
+  // ----------------------------------------------------------------------
+  // Step 3: emit one VEVENT per merged block.
+  // ----------------------------------------------------------------------
+  for (const b of blocks) {
+    const prov = provMap.get(b.providerId);
+    const poolMeta = POOL_META[b.pool as Pool];
+    const poolLabel = poolMeta?.label ?? b.pool;
+    const shortPool = SHORT_POOL_TITLE[b.pool] ?? poolMeta?.short ?? poolLabel;
     const titleName = prov
       ? prov.credentials === "PA-C"
         ? `${prov.lastName}, PA-C`
         : prov.lastName
-      : `Provider ${s.providerId}`;
-    const provName = providerLabel(prov, s.providerId);
-    const shortLocs = s.locations.map(shortLocation);
+      : `Provider ${b.providerId}`;
+    const provName = providerLabel(prov, b.providerId);
+
+    // Aggregate locations across the merged shifts.
+    const locSet = new Set<string>();
+    for (const s of b.sourceShifts) for (const l of s.locations) locSet.add(l);
+    const locs = Array.from(locSet);
+    const shortLocs = locs.map(shortLocation);
+
+    // Use the most recent updatedAt across the merged shifts.
+    let updatedAt = b.sourceShifts[0].updatedAt;
+    for (const s of b.sourceShifts) if (s.updatedAt > updatedAt) updatedAt = s.updatedAt;
+
+    // Compute hours for the human-readable description: the actual start of
+    // the first shift → actual end of the last shift in the run.
+    const firstShift = b.sourceShifts[0];
+    const lastShift = b.sourceShifts[b.sourceShifts.length - 1];
+
     const summary = `${shortPool} — ${titleName}`;
     const description = [
       `Pool: ${poolLabel}`,
       `Provider: ${provName}`,
       shortLocs.length > 0 ? `Locations: ${shortLocs.join(", ")}` : null,
-      s.locations.length > 0 && s.locations.join(",") !== shortLocs.join(",")
-        ? `Full locations: ${s.locations.join(", ")}`
+      locs.length > 0 && locs.join(",") !== shortLocs.join(",")
+        ? `Full locations: ${locs.join(", ")}`
         : null,
-      s.note ? `Note: ${s.note}` : null,
-      // Include the actual on-call hours in the description since the event itself is all-day.
-      `Hours: ${new Date(s.startAt).toLocaleString(undefined, {
+      b.note ? `Note: ${b.note}` : null,
+      `Hours: ${new Date(firstShift.startAt).toLocaleString(undefined, {
         weekday: "short",
         month: "short",
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
-      })} → ${new Date(s.endAt).toLocaleString(undefined, {
+      })} → ${new Date(lastShift.endAt).toLocaleString(undefined, {
         weekday: "short",
         month: "short",
         day: "numeric",
@@ -193,24 +298,18 @@ export function buildICal(opts: {
       .filter(Boolean)
       .join("\\n");
 
-    // All-day event boundaries.
-    // Floor to the start day; for the end, take the last day the shift covers and
-    // add 1 (DTEND is EXCLUSIVE in iCalendar all-day events).
-    const startDay = toLocalDateOnly(s.startAt);
-    // If the shift ends exactly at midnight, it doesn't actually cover that final day —
-    // back off 1 minute before deriving the last covered date.
-    const endLocal = new Date(s.endAt);
-    const lastCovered = new Date(endLocal.getTime() - 60 * 1000);
-    const lastCoveredYmd =
-      lastCovered.getFullYear().toString() +
-      String(lastCovered.getMonth() + 1).padStart(2, "0") +
-      String(lastCovered.getDate()).padStart(2, "0");
-    const dtendDay = addDaysDateOnly(lastCoveredYmd, 1);
+    // All-day event: DTSTART = first call day, DTEND = lastDay + 1 (exclusive).
+    const dtendDay = dateAdd(b.lastDay, 1);
+
+    // Stable UID: anchor on the (provider, pool, firstDay) tuple so that
+    // re-rendering the calendar after edits doesn't churn UIDs (Apple
+    // Calendar treats new UIDs as new events and old UIDs as orphans).
+    const uid = `block-${b.providerId}-${b.pool}-${b.firstDay}@mientcall`;
 
     lines.push("BEGIN:VEVENT");
-    lines.push(`UID:shift-${s.id}@mientcall`);
-    lines.push(`DTSTAMP:${toICSDate(s.updatedAt)}`);
-    lines.push(`DTSTART;VALUE=DATE:${startDay}`);
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${toICSDate(updatedAt)}`);
+    lines.push(`DTSTART;VALUE=DATE:${b.firstDay}`);
     lines.push(`DTEND;VALUE=DATE:${dtendDay}`);
     lines.push("TRANSP:TRANSPARENT");
     lines.push(`SUMMARY:${escapeICS(summary)}`);
