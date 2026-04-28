@@ -15,8 +15,9 @@ import { z } from "zod";
  *  - thgr:      Trinity Health St. Mary's GR ER
  *  - corewell:  Corewell Butterworth/Blodgett/HDVCH (Helen DeVos)
  *  - uofm_west: UofM Health West Facial Trauma
- *  Legacy (hidden from UI):
- *  - weekend:   Legacy weekend pool (hidden, kept to avoid DB type errors)
+ *  Weekend rotation (data-only, folded into MIENT-GR/GRENT rows in the UI):
+ *  - weekend:   GR weekend call pool (Fri 5p → Mon 8a). Drives the Thursday
+ *               handoff rule and the weekend portions of MIENT-GR / GRENT rows.
  */
 export const POOLS = [
   "pa",
@@ -209,9 +210,9 @@ export const POOL_META: Record<Pool, { label: string; short: string; description
     hue: 48, // maize (U of M)
   },
   weekend: {
-    label: "GR Call Pool (Legacy)",
-    short: "GR Call",
-    description: "Legacy GR call pool — hidden from UI. Data retained for historical reference.",
+    label: "Weekend Call",
+    short: "Weekend",
+    description: "GR weekend call pool (Fri 5p → Mon 8a). Folded into MIENT-GR / GRENT rows in the calendar; drives the Thursday handoff rule.",
     hue: 265, // purple
   },
 };

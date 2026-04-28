@@ -471,11 +471,25 @@ export default function CalendarPage() {
               const practiceGaps = inMonth ? practiceGapsByDate.get(dateKey) : undefined;
               const maxShown = isMobile ? 4 : 4;
 
+              const openDayInWeek = () => {
+                pickView("week");
+                setCursor(day);
+              };
               return (
                 <div
                   key={day.toISOString()}
                   data-testid={`day-${day.toISOString().slice(0, 10)}`}
-                  className={`min-h-[96px] sm:min-h-[120px] border-b border-r last:border-r-0 p-1 sm:p-1.5 flex flex-col gap-1 ${
+                  onClick={openDayInWeek}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openDayInWeek();
+                    }
+                  }}
+                  title="Open in week view"
+                  className={`min-h-[96px] sm:min-h-[120px] border-b border-r last:border-r-0 p-1 sm:p-1.5 flex flex-col gap-1 cursor-pointer transition-colors hover:bg-muted/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset ${
                     inMonth ? "bg-card" : "bg-muted/20"
                   } ${practiceGaps ? "ring-1 ring-inset ring-destructive/30" : ""}`}
                 >
@@ -531,7 +545,10 @@ export default function CalendarPage() {
                       return (
                         <button
                           key={s.id}
-                          onClick={() => setSelectedShift(s)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedShift(s);
+                          }}
                           data-testid={`shift-${s.id}`}
                           className="flex items-center gap-1 sm:gap-1.5 text-left text-[10px] sm:text-[11px] leading-tight rounded px-0.5 sm:px-1 py-[2px] hover-elevate"
                           title={`${meta.label} · ${titleName}${locs ? ` · ${locs}` : ""}`}
@@ -550,9 +567,9 @@ export default function CalendarPage() {
                     })}
                     {dayShifts.length > maxShown && (
                       <button
-                        onClick={() => {
-                          pickView("week");
-                          setCursor(day);
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openDayInWeek();
                         }}
                         className="text-[14px] leading-none text-muted-foreground hover:text-foreground px-1 text-left tracking-widest"
                         title={`${dayShifts.length - maxShown} more — tap to open week view`}

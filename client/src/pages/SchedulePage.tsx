@@ -86,9 +86,25 @@ export default function SchedulePage() {
     },
   });
 
+  // Hospital coverage pools are layered on top of practice rotation — any
+  // active physician can be assigned (the actual rotation is informal and lives
+  // outside this app). PA pool is PA-only; the four practice pools use strict
+  // eligibility from each provider's primary/eligible pools.
+  const HOSPITAL_COVERAGE_POOLS = new Set<Pool>([
+    "zch",
+    "noch",
+    "thgr",
+    "corewell",
+    "uofm_west",
+  ] as Pool[]);
   const eligibleProviders = (pool: Pool) =>
     providers.filter((p) => {
       if (!p.active) return false;
+      // PA pool: only PAs (credentials = PA-C).
+      if (pool === "pa") return p.credentials === "PA-C";
+      // Hospital coverage rows: any active physician (not PAs).
+      if (HOSPITAL_COVERAGE_POOLS.has(pool)) return p.credentials !== "PA-C";
+      // Practice pools (lakeshore / mientgr / grent / weekend): strict eligibility.
       if (p.primaryPool === pool) return true;
       try {
         const arr = JSON.parse(p.eligiblePools || "[]") as string[];

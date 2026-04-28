@@ -56,13 +56,54 @@ function escapeICS(s: string) {
   return s.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
 }
 
+// Practice-row pools that show up in the app's week view. Anything else
+// (NOCH, ZCH, THGR, Corewell, U of M West, weekend, peds_backup) is hospital
+// or rotation-internal noise that clutters subscribed calendars and is
+// excluded by default. Pass `includeAll: true` to override.
+const PRACTICE_POOLS = new Set(["pa", "grent", "lakeshore", "mientgr"]);
+
+// Short titles that mirror the in-app week view ("Lakeshore — Keenan")
+// rather than the longer formal labels. Falls back to POOL_META.label.
+const SHORT_POOL_TITLE: Record<string, string> = {
+  pa: "PA",
+  grent: "GRENT",
+  lakeshore: "Lakeshore",
+  mientgr: "MIENT-GR",
+};
+
+// Mirror of LOCATION_SHORT in client/src/lib/shiftUtils.ts so the iCal feed
+// uses the same compact site names ("Lakeshore, ZCH, NOCH") that show up in
+// the app's week view.
+const LOCATION_SHORT: Record<string, string> = {
+  "MIENT Lakeshore practice": "Lakeshore",
+  "MIENT Lakeshore Practice": "Lakeshore",
+  "Zeeland Community Hospital": "ZCH",
+  "Trinity Health Grand Haven": "NOCH",
+  "North Ottawa Community Hospital": "NOCH",
+  "Trinity Health St. Mary's": "Trinity GR",
+  "Trinity Health Grand Rapids": "THGR",
+  "Corewell Butterworth/Blodgett/HDVCH": "HDVCH",
+  "Helen DeVos": "Helen DeVos",
+  "UofM Health West": "UofM West",
+};
+function shortLocation(loc: string) {
+  return LOCATION_SHORT[loc] ?? loc;
+}
+
 export function buildICal(opts: {
   shifts: Shift[];
   providers: Provider[];
   calendarName: string;
+  includeAll?: boolean;
 }) {
-  const { shifts, providers, calendarName } = opts;
+  const { shifts, providers, calendarName, includeAll = false } = opts;
   const provMap = new Map(providers.map((p) => [p.id, p]));
+
+  // Filter to the four practice rows by default — matches what users see in
+  // the week view of the app and keeps subscribed calendars uncluttered.
+  const filtered = includeAll
+    ? shifts
+    : shifts.filter((s) => PRACTICE_POOLS.has(s.pool));
   const lines: string[] = [];
   lines.push("BEGIN:VCALENDAR");
   lines.push("VERSION:2.0");
@@ -87,7 +128,7 @@ export function buildICal(opts: {
     locations: string[];
   };
   const groups = new Map<string, MergedShift>();
-  for (const s of shifts) {
+  for (const s of filtered) {
     const key = `${s.providerId}|${s.pool}|${s.startAt}|${s.endAt}`;
     const existing = groups.get(key);
     if (existing) {
@@ -114,19 +155,25 @@ export function buildICal(opts: {
     const prov = provMap.get(s.providerId);
     const poolMeta = POOL_META[s.pool as Pool];
     const poolLabel = poolMeta?.label ?? s.pool;
+    const shortPool = SHORT_POOL_TITLE[s.pool] ?? poolMeta?.short ?? poolLabel;
+    // Use the provider's last name only in the title (matches the app's week view).
+    // Drop the "Dr." prefix in the title; PAs already have ", PA-C" baked in by
+    // providerLabel(). For docs, just show the last name; PAs show "Last, PA-C".
+    const titleName = prov
+      ? prov.credentials === "PA-C"
+        ? `${prov.lastName}, PA-C`
+        : prov.lastName
+      : `Provider ${s.providerId}`;
     const provName = providerLabel(prov, s.providerId);
-    // Compact location summary: omit if none, show 1 plainly, collapse 2+ into "X + N more"
-    const locSummary =
-      s.locations.length === 0
-        ? ""
-        : s.locations.length === 1
-        ? ` @ ${s.locations[0]}`
-        : ` @ ${s.locations[0]} + ${s.locations.length - 1} more`;
-    const summary = `${poolLabel} — ${provName}${locSummary}`;
+    const shortLocs = s.locations.map(shortLocation);
+    const summary = `${shortPool} — ${titleName}`;
     const description = [
       `Pool: ${poolLabel}`,
       `Provider: ${provName}`,
-      s.locations.length > 0 ? `Locations: ${s.locations.join(", ")}` : null,
+      shortLocs.length > 0 ? `Locations: ${shortLocs.join(", ")}` : null,
+      s.locations.length > 0 && s.locations.join(",") !== shortLocs.join(",")
+        ? `Full locations: ${s.locations.join(", ")}`
+        : null,
       s.note ? `Note: ${s.note}` : null,
       // Include the actual on-call hours in the description since the event itself is all-day.
       `Hours: ${new Date(s.startAt).toLocaleString(undefined, {
@@ -168,7 +215,7 @@ export function buildICal(opts: {
     lines.push("TRANSP:TRANSPARENT");
     lines.push(`SUMMARY:${escapeICS(summary)}`);
     lines.push(`DESCRIPTION:${escapeICS(description)}`);
-    if (s.locations.length > 0) lines.push(`LOCATION:${escapeICS(s.locations.join(", "))}`);
+    if (shortLocs.length > 0) lines.push(`LOCATION:${escapeICS(shortLocs.join(", "))}`);
     lines.push("END:VEVENT");
   }
 
