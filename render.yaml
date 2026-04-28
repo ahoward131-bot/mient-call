@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: mient-call
+    runtime: node
+    plan: starter            # $7/month, always-on. Use "free" if you accept 30s wake-ups.
+    region: oregon            # closest US region for most users
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    autoDeploy: true
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /var/data/data.db
+    disk:
+      name: mient-call-data
+      mountPath: /var/data    # persistent across restarts/deploys
+      sizeGB: 1               # smallest size, ~$0.25/month
